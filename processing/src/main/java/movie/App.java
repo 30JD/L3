@@ -20,6 +20,7 @@ import org.apache.flink.core.fs.FileSystem.WriteMode;
 
 import java.util.List;
 import java.util.Properties;
+import java.util.Timer;
 
 /**
  * Hello world!
@@ -27,7 +28,7 @@ import java.util.Properties;
  */
 public class App 
 {
-    private static int counter = 0;
+    private static long startTime;
     private static class MySimpleStringSchema extends SimpleStringSchema {
         private static final long serialVersionUID = 1L;
 
@@ -39,7 +40,7 @@ public class App
 
         @Override
         public boolean isEndOfStream(String nextElement) {
-            if (counter >= 30) {
+            if (System.currentTimeMillis() - startTime >= 60000) {
                 return true;
             }
             return super.isEndOfStream(nextElement);
@@ -54,16 +55,13 @@ public class App
         final FlinkKafkaConsumer consumer = new FlinkKafkaConsumer<>("movielog3", new MySimpleStringSchema(), properties);
         consumer.setStartFromEarliest();
         DataStream<String> stream = env.addSource(consumer);
-        System.out.println("started");
+        startTime = System.currentTimeMillis();
         stream.map(new Splitter())
                 .filter(new nullFilter())
                 .keyBy(value -> value.f0)
-                .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(20)))
                 .sum(1)
                 .map(new Rearranger())
-                .keyBy(value -> value.f0)
-                .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
-                .reduce(new Concatenator())
                 .writeAsText("data.txt", WriteMode.OVERWRITE)
                 .setParallelism(1);
         env.execute();
@@ -100,21 +98,11 @@ public class App
     public static class Rearranger implements MapFunction<Tuple2<String, Integer>, Tuple2<String, String>> {
         @Override
         public Tuple2<String, String> map(Tuple2<String, Integer> value) throws Exception{
-
             String[] userMovieStrs = value.f0.split("/");
             String userId = userMovieStrs[0];
             String movieId = userMovieStrs[1];
             return new Tuple2<>(userId, movieId + ":" + String.valueOf(value.f1));
         }
     }
-
-    public static class Concatenator implements ReduceFunction<Tuple2<String, String>> {
-        @Override
-        public Tuple2<String, String> reduce(Tuple2<String, String>value1, Tuple2<String, String>value2) throws Exception {
-            counter++;
-            return new Tuple2<>(value1.f0, value1.f1 + "," + value2.f1);
-        }
-    }
-
 
 }
